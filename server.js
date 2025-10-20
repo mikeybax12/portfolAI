@@ -479,6 +479,62 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
 });
 
+// Setup database tables (run once)
+app.get('/api/setup-database', async (req, res) => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        full_name VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS clients (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        phone VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS meetings (
+        id SERIAL PRIMARY KEY,
+        client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        date DATE NOT NULL,
+        notes TEXT NOT NULL,
+        summary TEXT,
+        sentiment VARCHAR(20),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS scheduled_meetings (
+        id SERIAL PRIMARY KEY,
+        client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        date DATE NOT NULL,
+        time TIME NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id);
+      CREATE INDEX IF NOT EXISTS idx_meetings_client_id ON meetings(client_id);
+      CREATE INDEX IF NOT EXISTS idx_scheduled_meetings_client_id ON scheduled_meetings(client_id);
+      CREATE INDEX IF NOT EXISTS idx_meetings_date ON meetings(date);
+      CREATE INDEX IF NOT EXISTS idx_scheduled_meetings_date ON scheduled_meetings(date);
+    `);
+
+    res.json({ status: 'success', message: 'Database tables created successfully!' });
+  } catch (error) {
+    console.error('Database setup error:', error);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
 // Catch-all for debugging
 app.use((req, res) => {
   console.log('Route not found:', req.method, req.path);
