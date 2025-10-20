@@ -1,7 +1,9 @@
 const { useState, useEffect } = React;
 
-// API Base URL
-const API_URL = 'http://localhost:3001/api';
+// API Base URL - automatically detects environment
+const API_URL = window.location.hostname === 'localhost'
+  ? 'http://localhost:3001/api'
+  : 'https://portfolai-production.up.railway.app/api';
 
 // ============= API HELPERS =============
 
