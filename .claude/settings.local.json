@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node \"C:\\Users\\Bobby Baxter\\ai-advisor-chat\\check-db.js\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
