@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS meetings (
   date DATE NOT NULL,
   notes TEXT NOT NULL,
   summary TEXT,
-  sentiment VARCHAR(20),
+  sentiment INTEGER CHECK (sentiment >= 0 AND sentiment <= 10),
+  action_items JSONB DEFAULT '[]'::jsonb,
+  personal_notes JSONB DEFAULT '[]'::jsonb,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

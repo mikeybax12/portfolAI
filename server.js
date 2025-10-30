@@ -301,10 +301,12 @@ app.post('/api/clients/:clientId/meetings', authenticateToken, [
   body('date').isDate(),
   body('notes').trim().notEmpty(),
   body('summary').optional(),
-  body('sentiment').optional()
+  body('sentiment').optional().isInt({ min: 0, max: 10 }),
+  body('actionItems').optional().isArray(),
+  body('personalNotes').optional().isArray()
 ], async (req, res) => {
   const { clientId } = req.params;
-  const { date, notes, summary, sentiment } = req.body;
+  const { date, notes, summary, sentiment, actionItems, personalNotes } = req.body;
 
   try {
     // Verify client belongs to user
@@ -318,13 +320,54 @@ app.post('/api/clients/:clientId/meetings', authenticateToken, [
     }
 
     const result = await pool.query(
-      'INSERT INTO meetings (client_id, date, notes, summary, sentiment) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [clientId, date, notes, summary || null, sentiment || null]
+      'INSERT INTO meetings (client_id, date, notes, summary, sentiment, action_items, personal_notes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+      [clientId, date, notes, summary || null, sentiment || null, JSON.stringify(actionItems || []), JSON.stringify(personalNotes || [])]
     );
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Create meeting error:', error);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+// Toggle action item completion
+app.patch('/api/meetings/:meetingId/action-items/:itemIndex', authenticateToken, async (req, res) => {
+  const { meetingId, itemIndex } = req.params;
+  const { completed } = req.body;
+
+  try {
+    // Get the meeting and verify ownership through client
+    const meetingCheck = await pool.query(
+      `SELECT m.* FROM meetings m
+       JOIN clients c ON m.client_id = c.id
+       WHERE m.id = $1 AND c.user_id = $2`,
+      [meetingId, req.userId]
+    );
+
+    if (meetingCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Meeting not found.' });
+    }
+
+    const meeting = meetingCheck.rows[0];
+    const actionItems = meeting.action_items || [];
+
+    if (itemIndex < 0 || itemIndex >= actionItems.length) {
+      return res.status(400).json({ error: 'Invalid action item index.' });
+    }
+
+    // Update the completed status
+    actionItems[itemIndex].completed = completed;
+
+    // Save back to database
+    const result = await pool.query(
+      'UPDATE meetings SET action_items = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
+      [JSON.stringify(actionItems), meetingId]
+    );
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Toggle action item error:', error);
     res.status(500).json({ error: 'Server error.' });
   }
 });
@@ -525,7 +568,9 @@ app.get('/api/setup-database', async (req, res) => {
         date DATE NOT NULL,
         notes TEXT NOT NULL,
         summary TEXT,
-        sentiment VARCHAR(20),
+        sentiment INTEGER CHECK (sentiment >= 0 AND sentiment <= 10),
+        action_items JSONB DEFAULT '[]'::jsonb,
+        personal_notes JSONB DEFAULT '[]'::jsonb,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );

@@ -47,6 +47,42 @@ const apiCall = async (endpoint, options = {}) => {
   return response.json();
 };
 
+// Sentiment color gradient (0=red, 5=grey, 10=green)
+const getSentimentColor = (sentiment) => {
+  if (sentiment === null || sentiment === undefined) return { bg: '#e5e7eb', text: '#6b7280' }; // grey
+
+  const score = Math.max(0, Math.min(10, sentiment)); // clamp between 0-10
+
+  if (score < 5) {
+    // Red gradient (0-4): darker red to lighter red
+    const intensity = 1 - (score / 5); // 1 at 0, 0 at 5
+    const lightness = 30 + (intensity * 20); // 50% to 30%
+    return {
+      bg: `hsl(0, 70%, ${95 - intensity * 20}%)`, // Light red background
+      text: `hsl(0, 70%, ${lightness}%)` // Dark red text
+    };
+  } else if (score === 5) {
+    // Neutral grey
+    return { bg: '#e5e7eb', text: '#6b7280' };
+  } else {
+    // Green gradient (6-10): lighter green to darker green
+    const intensity = (score - 5) / 5; // 0 at 5, 1 at 10
+    const lightness = 30 + ((1 - intensity) * 20); // 50% to 30%
+    return {
+      bg: `hsl(120, 60%, ${95 - intensity * 20}%)`, // Light green background
+      text: `hsl(120, 60%, ${lightness}%)` // Dark green text
+    };
+  }
+};
+
+// Get sentiment label
+const getSentimentLabel = (sentiment) => {
+  if (sentiment === null || sentiment === undefined) return 'No data';
+  if (sentiment > 5) return 'Positive';
+  if (sentiment === 5) return 'Neutral';
+  return 'Negative';
+};
+
 // AI Summary Generation
 const generateAISummary = async (notes) => {
   try {
@@ -54,12 +90,20 @@ const generateAISummary = async (notes) => {
       method: 'POST',
       body: JSON.stringify({
         model: 'claude-3-5-haiku-20241022',
-        max_tokens: 300,
+        max_tokens: 500,
         messages: [{
           role: 'user',
-          content: `You are a financial advisor's AI assistant. Below are meeting notes from a client meeting. Please provide:
+          content: `You are a financial advisor's AI assistant. Below are meeting notes from a client meeting. Please analyze the notes and provide:
+
 1. A concise 2-3 sentence summary of what was discussed
-2. The client's sentiment (positive, negative, or neutral)
+2. A sentiment score from 0-10 where:
+   - 0-2: Very negative (client upset, major concerns, considering leaving)
+   - 3-4: Somewhat negative (mild concerns, worried about something)
+   - 5: Neutral (routine discussion, neither positive nor negative)
+   - 6-7: Somewhat positive (satisfied, optimistic)
+   - 8-10: Very positive (very happy, excited, grateful)
+3. Action items for the advisor (things you need to do, documents to send, follow-ups needed)
+4. Personal notes to remember for next time (life events, personal details, things to ask about later)
 
 Meeting Notes:
 ${notes}
@@ -67,8 +111,23 @@ ${notes}
 Respond in this exact JSON format:
 {
   "summary": "your summary here",
-  "sentiment": "positive/negative/neutral"
-}`
+  "sentiment": 7,
+  "actionItems": [
+    {"text": "Send retirement calculator", "completed": false},
+    {"text": "Schedule Q3 review", "completed": false}
+  ],
+  "personalNotes": [
+    "Ask how daughter's wedding went (mentioned getting married in March)",
+    "Mother recently in hospital - follow up on her health"
+  ]
+}
+
+IMPORTANT:
+- actionItems must be an array of objects with "text" and "completed" fields
+- personalNotes must be an array of strings
+- sentiment must be a number from 0-10
+- Include only actionable items in actionItems (things the advisor must DO)
+- Include personal/relationship items in personalNotes (things to REMEMBER/ASK about)`
         }]
       })
     });
@@ -85,7 +144,9 @@ Respond in this exact JSON format:
       const result = JSON.parse(jsonMatch[0]);
       return {
         summary: result.summary,
-        sentiment: result.sentiment.toLowerCase()
+        sentiment: result.sentiment,
+        actionItems: result.actionItems || [],
+        personalNotes: result.personalNotes || []
       };
     }
 
@@ -645,7 +706,7 @@ const AddMeetingModal = ({ isOpen, onClose, clients, onAddMeeting, onAddClient, 
 
       if (clientId && notes.trim()) {
         // Generate AI summary
-        const { summary, sentiment } = await generateAISummary(notes);
+        const { summary, sentiment, actionItems, personalNotes } = await generateAISummary(notes);
 
         // Save meeting
         const meeting = await apiCall(`/clients/${clientId}/meetings`, {
@@ -654,7 +715,9 @@ const AddMeetingModal = ({ isOpen, onClose, clients, onAddMeeting, onAddClient, 
             date: meetingDate,
             notes: notes.trim(),
             summary: summary,
-            sentiment: sentiment
+            sentiment: sentiment,
+            actionItems: actionItems,
+            personalNotes: personalNotes
           })
         });
 
@@ -966,8 +1029,18 @@ const Calendar = ({ clients, onShowScheduleMeeting }) => {
                 {meeting.type === 'past' ? (
                   <>
                     <div className="day-meeting-summary">{meeting.summary}</div>
-                    <span className={`sentiment-badge sentiment-${meeting.sentiment}`}>
-                      {meeting.sentiment}
+                    <span
+                      className="sentiment-badge"
+                      style={{
+                        background: getSentimentColor(meeting.sentiment).bg,
+                        color: getSentimentColor(meeting.sentiment).text,
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      {getSentimentLabel(meeting.sentiment)} ({meeting.sentiment}/10)
                     </span>
                   </>
                 ) : (
@@ -1265,9 +1338,19 @@ const Dashboard = ({ clients, onSelectClient, onShowDocumentMeeting, onShowAddCl
                       <td>{getLastMeetingDate(client)}</td>
                       <td>{getNextMeetingDate(client)}</td>
                       <td>
-                        {getLastMeetingSentiment(client) ? (
-                          <span className={`sentiment-badge sentiment-${getLastMeetingSentiment(client)}`}>
-                            {getLastMeetingSentiment(client)}
+                        {getLastMeetingSentiment(client) !== null ? (
+                          <span
+                            className="sentiment-badge"
+                            style={{
+                              background: getSentimentColor(getLastMeetingSentiment(client)).bg,
+                              color: getSentimentColor(getLastMeetingSentiment(client)).text,
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              fontWeight: '600'
+                            }}
+                          >
+                            {getSentimentLabel(getLastMeetingSentiment(client))} ({getLastMeetingSentiment(client)}/10)
                           </span>
                         ) : (
                           '-'
@@ -1315,6 +1398,12 @@ const ClientView = ({ client, onBack, onAddMeeting, onShowScheduleMeetingForClie
   const [notes, setNotes] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState('');
+  const [localClient, setLocalClient] = useState(client);
+
+  // Update local client when prop changes
+  useEffect(() => {
+    setLocalClient(client);
+  }, [client]);
 
   const handleGenerateAndSave = async (e) => {
     e.preventDefault();
@@ -1324,7 +1413,7 @@ const ClientView = ({ client, onBack, onAddMeeting, onShowScheduleMeetingForClie
     try {
       if (notes.trim()) {
         // Generate AI summary
-        const { summary, sentiment } = await generateAISummary(notes);
+        const { summary, sentiment, actionItems, personalNotes } = await generateAISummary(notes);
 
         // Save meeting
         const meeting = await apiCall(`/clients/${client.id}/meetings`, {
@@ -1333,7 +1422,9 @@ const ClientView = ({ client, onBack, onAddMeeting, onShowScheduleMeetingForClie
             date: meetingDate,
             notes: notes.trim(),
             summary: summary,
-            sentiment: sentiment
+            sentiment: sentiment,
+            actionItems: actionItems,
+            personalNotes: personalNotes
           })
         });
 
@@ -1351,13 +1442,43 @@ const ClientView = ({ client, onBack, onAddMeeting, onShowScheduleMeetingForClie
     }
   };
 
-  const getSentimentBadgeClass = (sentiment) => {
-    return `sentiment-badge sentiment-${sentiment}`;
+  const handleToggleActionItem = async (meetingId, itemIndex, currentCompleted) => {
+    try {
+      // Optimistically update local state
+      const updatedClient = {
+        ...localClient,
+        meetings: localClient.meetings.map(meeting => {
+          if (meeting.id === meetingId) {
+            const updatedActionItems = [...(meeting.action_items || [])];
+            updatedActionItems[itemIndex] = {
+              ...updatedActionItems[itemIndex],
+              completed: !currentCompleted
+            };
+            return {
+              ...meeting,
+              action_items: updatedActionItems
+            };
+          }
+          return meeting;
+        })
+      };
+      setLocalClient(updatedClient);
+
+      // Save to server
+      await apiCall(`/meetings/${meetingId}/action-items/${itemIndex}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ completed: !currentCompleted })
+      });
+    } catch (error) {
+      console.error('Error toggling action item:', error);
+      // Revert on error
+      setLocalClient(client);
+    }
   };
 
   // Get upcoming scheduled meetings (future dates)
   const today = new Date().toISOString().split('T')[0];
-  const upcomingMeetings = (client.scheduledMeetings || [])
+  const upcomingMeetings = (localClient.scheduledMeetings || [])
     .filter(meeting => meeting.date >= today)
     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
@@ -1367,7 +1488,7 @@ const ClientView = ({ client, onBack, onAddMeeting, onShowScheduleMeetingForClie
         <button className="btn btn-back" onClick={onBack}>
           <i className="fas fa-arrow-left"></i> Back to Clients
         </button>
-        <h2>{client.name}</h2>
+        <h2>{localClient.name}</h2>
         <div style={{ display: 'flex', gap: '12px' }}>
           <button className="btn btn-secondary" onClick={onShowScheduleMeetingForClient}>
             <i className="fas fa-calendar-plus"></i> Schedule Meeting
@@ -1454,35 +1575,117 @@ const ClientView = ({ client, onBack, onAddMeeting, onShowScheduleMeetingForClie
 
       <div className="meetings-section">
         <h3><i className="fas fa-history"></i> Meeting History</h3>
-        {!client.meetings || client.meetings.length === 0 ? (
+        {!localClient.meetings || localClient.meetings.length === 0 ? (
           <div className="empty-state">
             <p>No meetings recorded yet.</p>
           </div>
         ) : (
           <div className="meetings-list">
-            {client.meetings.slice().reverse().map((meeting, index) => (
-              <div key={index} className="meeting-card">
-                <div className="meeting-header">
-                  <span className="meeting-date">
-                    {new Date(meeting.date).toLocaleDateString('en-US', {
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric'
-                    })}
-                  </span>
-                  <span className={getSentimentBadgeClass(meeting.sentiment)}>
-                    {meeting.sentiment.charAt(0).toUpperCase() + meeting.sentiment.slice(1)}
-                  </span>
+            {localClient.meetings.slice().reverse().map((meeting, index) => {
+              const sentimentColors = getSentimentColor(meeting.sentiment);
+              const actionItems = meeting.action_items || [];
+              const personalNotes = meeting.personal_notes || [];
+
+              return (
+                <div key={index} className="meeting-card">
+                  <div className="meeting-header">
+                    <span className="meeting-date">
+                      {new Date(meeting.date).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                      })}
+                    </span>
+                    <span
+                      className="sentiment-badge"
+                      style={{
+                        background: sentimentColors.bg,
+                        color: sentimentColors.text,
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      {getSentimentLabel(meeting.sentiment)} ({meeting.sentiment}/10)
+                    </span>
+                  </div>
+
+                  <div className="meeting-summary">
+                    <p><strong>AI Summary:</strong> {meeting.summary}</p>
+                  </div>
+
+                  {actionItems.length > 0 && (
+                    <div className="meeting-action-items" style={{ marginTop: '16px' }}>
+                      <p style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px', color: 'var(--gray-700)' }}>
+                        ✅ Action Items:
+                      </p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {actionItems.map((item, itemIndex) => (
+                          <label
+                            key={itemIndex}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              cursor: 'pointer',
+                              padding: '8px',
+                              borderRadius: '4px',
+                              background: item.completed ? 'var(--gray-50)' : 'transparent',
+                              transition: 'background 0.2s'
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={item.completed || false}
+                              onChange={() => handleToggleActionItem(meeting.id, itemIndex, item.completed)}
+                              style={{
+                                width: '16px',
+                                height: '16px',
+                                cursor: 'pointer'
+                              }}
+                            />
+                            <span style={{
+                              fontSize: '14px',
+                              textDecoration: item.completed ? 'line-through' : 'none',
+                              color: item.completed ? 'var(--gray-500)' : 'var(--gray-700)'
+                            }}>
+                              {item.text}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {personalNotes.length > 0 && (
+                    <div className="meeting-personal-notes" style={{ marginTop: '16px' }}>
+                      <p style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px', color: 'var(--gray-700)' }}>
+                        💬 Remember for Next Time:
+                      </p>
+                      <ul style={{
+                        margin: 0,
+                        paddingLeft: '20px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '4px'
+                      }}>
+                        {personalNotes.map((note, noteIndex) => (
+                          <li key={noteIndex} style={{ fontSize: '14px', color: 'var(--gray-600)' }}>
+                            {note}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <details className="meeting-notes" style={{ marginTop: '16px' }}>
+                    <summary>View Original Notes</summary>
+                    <pre>{meeting.notes}</pre>
+                  </details>
                 </div>
-                <div className="meeting-summary">
-                  <p><strong>AI Summary:</strong> {meeting.summary}</p>
-                </div>
-                <details className="meeting-notes">
-                  <summary>View Original Notes</summary>
-                  <pre>{meeting.notes}</pre>
-                </details>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
