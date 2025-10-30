@@ -30,10 +30,13 @@ const apiCall = async (endpoint, options = {}) => {
   });
 
   if (response.status === 401) {
-    // Unauthorized - token expired or invalid
-    clearAuthToken();
-    window.location.reload();
-    return;
+    // Only auto-reload if user had a token (expired session)
+    // If no token, let the error propagate (invalid login)
+    if (token) {
+      clearAuthToken();
+      window.location.reload();
+      return;
+    }
   }
 
   if (!response.ok) {
@@ -70,6 +73,12 @@ Respond in this exact JSON format:
       })
     });
 
+    console.log('Claude API Response:', response);
+
+    if (!response || !response.content || !response.content[0]) {
+      throw new Error('Invalid response from Claude API');
+    }
+
     const content = response.content[0].text;
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
@@ -83,6 +92,7 @@ Respond in this exact JSON format:
     throw new Error('Failed to parse AI response');
   } catch (error) {
     console.error('AI API Error:', error);
+    console.error('Error details:', error.message);
     throw error;
   }
 };

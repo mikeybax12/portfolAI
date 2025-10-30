@@ -445,8 +445,22 @@ app.get('/api/stocks/:symbol', async (req, res) => {
 // Proxy endpoint for Anthropic API
 app.post('/api/claude', authenticateToken, async (req, res) => {
   console.log('Claude endpoint hit! Request body:', req.body);
+
+  // Check if API key is set
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.error('ANTHROPIC_API_KEY is not set in environment variables');
+    return res.status(500).json({
+      error: {
+        type: 'configuration_error',
+        message: 'ANTHROPIC_API_KEY is not configured on the server'
+      }
+    });
+  }
+
   try {
     console.log('Making request to Anthropic API...');
+    console.log('API Key present:', process.env.ANTHROPIC_API_KEY ? 'Yes (length: ' + process.env.ANTHROPIC_API_KEY.length + ')' : 'No');
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -466,11 +480,15 @@ app.post('/api/claude', authenticateToken, async (req, res) => {
     }
 
     const data = await response.json();
-    console.log('Anthropic API success, sending response');
+    console.log('Anthropic API success! Response structure:', JSON.stringify({
+      hasContent: !!data.content,
+      contentLength: data.content?.length,
+      firstContentType: data.content?.[0]?.type
+    }));
     res.json(data);
   } catch (error) {
     console.error('Claude endpoint error:', error);
-    res.status(500).json({ error: { message: 'Internal server error' } });
+    res.status(500).json({ error: { message: 'Internal server error', details: error.message } });
   }
 });
 
